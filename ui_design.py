@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton
+from PyQt5.QtWidgets import QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton, QFrame
 from PyQt5.QtGui import QFont, QPixmap
 from PyQt5.QtCore import Qt
 import os
@@ -26,6 +26,21 @@ class GarbageUI(QWidget):
         self.lbl_kitchen, self.cnt_kitchen = self.create_item("厨余垃圾", "#2ECC71")
         self.lbl_other, self.cnt_other = self.create_item("其他垃圾", "#7F8C8D")
 
+        # --- 右侧：识别结果预览 ---
+        self.result_title = QLabel("识别结果预览")
+        self.result_title.setFont(QFont('微软雅黑', 14, QFont.Bold))
+        self.result_title.setAlignment(Qt.AlignCenter)
+
+        self.result_image_label = QLabel('等待触发识别')
+        self.result_image_label.setAlignment(Qt.AlignCenter)
+        self.result_image_label.setMinimumHeight(260)
+        self.result_image_label.setStyleSheet("background-color: #1F2D3D; color: white; border-radius: 12px; border: 1px solid #34495E;")
+
+        self.result_info_label = QLabel('类别: -\n置信度: -')
+        self.result_info_label.setAlignment(Qt.AlignCenter)
+        self.result_info_label.setFont(QFont('微软雅黑', 12))
+        self.result_info_label.setStyleSheet("background: white; border-radius: 8px; padding: 8px;")
+
         # 模拟物理按键的按钮
         self.trigger_btn = QPushButton("🚀 模拟物理按键触发 (或按空格)")
         self.trigger_btn.setFixedHeight(60)
@@ -35,6 +50,10 @@ class GarbageUI(QWidget):
         right_panel.addWidget(self.lbl_recyclable)
         right_panel.addWidget(self.lbl_kitchen)
         right_panel.addWidget(self.lbl_other)
+        right_panel.addSpacing(10)
+        right_panel.addWidget(self.result_title)
+        right_panel.addWidget(self.result_image_label)
+        right_panel.addWidget(self.result_info_label)
         right_panel.addStretch(1)
         right_panel.addWidget(self.trigger_btn)
 

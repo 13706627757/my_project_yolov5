@@ -34,9 +34,9 @@ def infer_once(detector, cap):
     if not ret:
         return None, None, None
 
-    img, label = detector.predict(frame)
+    img, label, confidence = detector.predict(frame)
     result_code = label_to_serial_code(label)
-    return img, label, result_code
+    return img, label, confidence, result_code
 
 
 class StreamDisplayThread:
@@ -96,14 +96,19 @@ class MainController(GarbageUI):
         """实时更新摄像头画面到界面"""
         self.show_image(frame)
 
+    def update_detection_result(self, img, label, confidence):
+        """把识别后的结果图显示到右侧，并展示类别和置信度"""
+        self.show_result_image(img)
+        self.result_info_label.setText(f'类别: {label}\n置信度: {confidence:.2%}')
+
     def run_detection(self):
         """这就是被按键触发的核心功能"""
         print("📡 收到触发指令，正在抓图...")
-        img, label, result_code = infer_once(self.detector, self.cap)
+        img, label, confidence, result_code = infer_once(self.detector, self.cap)
         if img is not None:
             # 调用大脑进行检测
-            # 更新界面图片
-            self.show_image(img)
+            # 更新右侧识别结果
+            self.update_detection_result(img, label, confidence)
             
             # 更新数量逻辑
             if label in self.counts:
@@ -135,6 +140,13 @@ class MainController(GarbageUI):
         qt_img = QImage(rgb.data, w, h, ch * w, QImage.Format_RGB888)
         self.video_label.setPixmap(QPixmap.fromImage(qt_img).scaled(
             self.video_label.width(), self.video_label.height(), Qt.KeepAspectRatio))
+
+    def show_result_image(self, img):
+        rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        h, w, ch = rgb.shape
+        qt_img = QImage(rgb.data, w, h, ch * w, QImage.Format_RGB888)
+        self.result_image_label.setPixmap(QPixmap.fromImage(qt_img).scaled(
+            self.result_image_label.width(), self.result_image_label.height(), Qt.KeepAspectRatio))
 
     def update_counter(self, label):
         val = str(self.counts[label])
@@ -188,12 +200,12 @@ def run_local_test_mode():
                 break
             elif key == ord('t'):
                 print('📡 收到触发指令，正在推理...')
-                img, label, result_code = infer_once(detector, cap)
+                img, label, confidence, result_code = infer_once(detector, cap)
                 if img is None:
                     print('❌ 推理失败')
                     continue
 
-                print(f'推理结果: label={label}')
+                print(f'推理结果: label={label}, confidence={confidence:.2%}')
                 if result_code is not None:
                     print(f'发送结果码: {result_code}')
                 else:
