@@ -14,7 +14,7 @@ pyserial>=3.5
 tqdm>=4.41.0
 
 # Logging -------------------------------------
-tensorboard>=2.4.1
+tensorboard>=2.20.0
 # wandb
 
 # Plotting ------------------------------------
