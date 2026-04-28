@@ -1,5 +1,6 @@
 import sys
 import argparse
+import warnings
 import cv2
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtGui import QImage, QPixmap
@@ -9,6 +10,10 @@ from ui_design import GarbageUI
 
 from model_logic import GarbageDetector
 from serial_listener import SerialTriggerListener
+
+# 抑制 CUDA 相关警告（Jetson 上用 CPU 加载模型时会出现）
+warnings.filterwarnings('ignore', category=UserWarning, message='.*CUDA.*')
+warnings.filterwarnings('ignore', category=UserWarning, message='.*torch.meshgrid.*')
 
 
 # =========================
@@ -33,6 +38,29 @@ def infer_once(detector, cap):
     result_code = label_to_serial_code(label)
     return img, label, result_code
 
+
+class StreamDisplayThread:
+    """后台持续读取摄像头并回调给主线程更新显示"""
+    def __init__(self, cap, callback, interval_ms=33):
+        self.cap = cap
+        self.callback = callback
+        self.interval_ms = interval_ms
+        self._running = True
+        from threading import Thread
+        self.thread = Thread(target=self._run, daemon=True)
+        self.thread.start()
+    
+    def _run(self):
+        import time
+        while self._running:
+            ret, frame = self.cap.read()
+            if ret:
+                self.callback(frame)
+            time.sleep(self.interval_ms / 1000.0)
+    
+    def stop(self):
+        self._running = False
+
 class MainController(GarbageUI):
     def __init__(self, serial_port='/dev/ttyTHS1', baudrate=115200):
         super().__init__()
@@ -43,9 +71,12 @@ class MainController(GarbageUI):
         if not self.cap.isOpened():
             print("❌ 摄像头打开失败，请检查设备连接。")
 
+        # 2. 启动实时摄像头显示线程
+        self.stream_thread = StreamDisplayThread(self.cap, self.update_stream_frame)
+
         self.serial_listener = None
         if serial_port:
-            # 2. 启动串口监听：默认 Jetson Nano 可用 /dev/ttyTHS1，本地可改成 COMx
+            # 3. 启动串口监听：默认 Jetson Nano 可用 /dev/ttyTHS1，本地可改成 COMx
             print(f"串口启动参数: port={serial_port}, baudrate={baudrate}")
             self.serial_listener = SerialTriggerListener(port=serial_port, baudrate=baudrate)
             self.serial_listener.trigger_received.connect(self.run_detection)
@@ -53,13 +84,17 @@ class MainController(GarbageUI):
             self.serial_listener.status.connect(print)
             self.serial_listener.start()
         
-        # 3. 绑定按钮点击事件
+        # 4. 绑定按钮点击事件
         self.trigger_btn.clicked.connect(self.run_detection)
         
     # 处理键盘事件 (按空格也能触发)
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Space:
             self.run_detection()
+
+    def update_stream_frame(self, frame):
+        """实时更新摄像头画面到界面"""
+        self.show_image(frame)
 
     def run_detection(self):
         """这就是被按键触发的核心功能"""
@@ -109,6 +144,8 @@ class MainController(GarbageUI):
         elif label == 'other': self.cnt_other.setText(val)
 
     def closeEvent(self, event):
+        if hasattr(self, 'stream_thread'):
+            self.stream_thread.stop()
         if hasattr(self, 'serial_listener') and self.serial_listener and self.serial_listener.isRunning():
             self.serial_listener.stop()
         if hasattr(self, 'cap') and self.cap.isOpened():
@@ -118,13 +155,13 @@ class MainController(GarbageUI):
 
 # =========================
 # 本地模式（笔记本终端）
-# 输入 t 触发一次推理
-# 输出 0-3 到终端
+# 实时显示摄像头，按 t 键触发推理
+# 输出 0-3 到终端，q 键退出
 # =========================
 def run_local_test_mode():
     print('================ 本地模式 local ================')
-    print('说明: 在笔记本终端输入 t 触发推理，不使用串口')
-    print('输入 t 开始推理，输入 q 退出')
+    print('说明: 实时显示摄像头，按 t 键触发推理，按 q 键退出')
+    print('提示: 点击摄像头窗口后再按键')
 
     detector = GarbageDetector('best.pt', 'cpu')
     cap = cv2.VideoCapture(0)
@@ -134,27 +171,36 @@ def run_local_test_mode():
         return
 
     try:
+        cv2.namedWindow('Local Test - Real-time Stream', cv2.WINDOW_AUTOSIZE)
+        print('按 t 键推理，按 q 键退出')
+        
         while True:
-            cmd = input('t/q > ').strip().lower()
-            if cmd == 'q':
+            ret, frame = cap.read()
+            if not ret:
+                print('❌ 抓图失败')
                 break
-            if cmd != 't':
-                print('请输入 t 或 q')
-                continue
 
-            print('📡 收到触发指令，正在抓图...')
-            img, label, result_code = infer_once(detector, cap)
-            if img is None:
-                print('❌ 抓图失败，未执行推理。')
-                continue
+            cv2.imshow('Local Test - Real-time Stream', frame)
+            key = cv2.waitKey(30) & 0xFF
 
-            print(f'推理结果: label={label}')
-            if result_code is not None:
-                print(f'发送结果码: {result_code}')
-            else:
-                print('⚠️ 未识别到有效类别，不发送结果码。')
+            if key == ord('q'):
+                print('用户退出')
+                break
+            elif key == ord('t'):
+                print('📡 收到触发指令，正在推理...')
+                img, label, result_code = infer_once(detector, cap)
+                if img is None:
+                    print('❌ 推理失败')
+                    continue
+
+                print(f'推理结果: label={label}')
+                if result_code is not None:
+                    print(f'发送结果码: {result_code}')
+                else:
+                    print('⚠️ 未识别到有效类别，不发送结果码。')
     finally:
         cap.release()
+        cv2.destroyAllWindows()
 
 
 # =========================
