@@ -2,6 +2,7 @@ import sys
 import argparse
 import warnings
 import cv2
+import time
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtGui import QImage, QPixmap
 from PyQt5.QtCore import Qt
@@ -37,6 +38,33 @@ def infer_once(detector, cap):
     img, label, confidence = detector.predict(frame)
     result_code = label_to_serial_code(label)
     return img, label, confidence, result_code
+
+
+def infer_with_retry(detector, cap, max_attempts=3, retry_delay_sec=0.1):
+    """连续推理多次，直到识别出类别；否则返回 fallback code 4。"""
+    last_img = None
+    last_label = None
+    last_confidence = 0.0
+
+    for attempt in range(1, max_attempts + 1):
+        img, label, confidence, result_code = infer_once(detector, cap)
+        if img is None:
+            print(f'❌ 第 {attempt} 次抓图失败')
+            return None, None, 0.0, None
+
+        last_img = img
+        last_label = label
+        last_confidence = confidence
+
+        if result_code is not None:
+            return img, label, confidence, result_code
+
+        if attempt < max_attempts:
+            print(f'⚠️ 第 {attempt} 次未识别到结果，{int(retry_delay_sec * 1000)}ms 后重试...')
+            
+            time.sleep(retry_delay_sec)
+
+    return last_img, last_label, last_confidence, '4'
 
 
 class StreamDisplayThread:
@@ -104,7 +132,7 @@ class MainController(GarbageUI):
     def run_detection(self):
         """这就是被按键触发的核心功能"""
         print("📡 收到触发指令，正在抓图...")
-        img, label, confidence, result_code = infer_once(self.detector, self.cap)
+        img, label, confidence, result_code = infer_with_retry(self.detector, self.cap)
         if img is not None:
             # 调用大脑进行检测
             # 更新右侧识别结果
@@ -200,7 +228,7 @@ def run_local_test_mode():
                 break
             elif key == ord('t'):
                 print('📡 收到触发指令，正在推理...')
-                img, label, confidence, result_code = infer_once(detector, cap)
+                img, label, confidence, result_code = infer_with_retry(detector, cap)
                 if img is None:
                     print('❌ 推理失败')
                     continue
