@@ -208,6 +208,12 @@ class MainController(GarbageUI):
 
             if result_code is not None:
                 print(f"推理结果: label={label}, result_code={result_code}")
+                if self.serial_listener and self.serial_listener.isRunning():
+                    ok = self.serial_listener.send_text(result_code)
+                    if ok:
+                        print(f"串口 TX -> {result_code}")
+                    else:
+                        print(f"⚠️ 串口发送失败，result_code={result_code}")
             else:
                 print(f"⚠️ 未识别到有效类别，label={label}")
         else:
