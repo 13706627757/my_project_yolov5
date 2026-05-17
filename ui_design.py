@@ -11,11 +11,11 @@ class GarbageUI(QWidget):
         self.init_ui()
 
     def init_ui(self):
-        self.setWindowTitle('垃圾分类监控本地开发版')
+        self.setWindowTitle('垃圾分类识别系统')
         self.resize(1600, 1000)
 
         # --- 左侧：视频显示 ---
-        self.video_label = QLabel('画面预览区\n(等待按键触发)')
+        self.video_label = QLabel('画面预览区\n(实时摄像头)')
         self.video_label.setAlignment(Qt.AlignCenter)
         self.video_label.setStyleSheet("background-color: #2C3E50; color: white; border-radius: 15px; font-size: 20px;")
 
@@ -27,11 +27,11 @@ class GarbageUI(QWidget):
         self.lbl_other, self.cnt_other = self.create_item("其他垃圾", "#7F8C8D")
 
         # --- 右侧：识别结果预览 ---
-        self.result_title = QLabel("识别结果预览")
+        self.result_title = QLabel("识别结果")
         self.result_title.setFont(QFont('微软雅黑', 14, QFont.Bold))
         self.result_title.setAlignment(Qt.AlignCenter)
 
-        self.result_image_label = QLabel('等待触发识别')
+        self.result_image_label = QLabel('等待识别结果')
         self.result_image_label.setAlignment(Qt.AlignCenter)
         self.result_image_label.setMinimumHeight(260)
         self.result_image_label.setStyleSheet("background-color: #1F2D3D; color: white; border-radius: 12px; border: 1px solid #34495E;")
@@ -41,8 +41,8 @@ class GarbageUI(QWidget):
         self.result_info_label.setFont(QFont('微软雅黑', 12))
         self.result_info_label.setStyleSheet("background: white; border-radius: 8px; padding: 8px;")
 
-        # 模拟物理按键的按钮
-        self.trigger_btn = QPushButton("🚀 模拟物理按键触发 (或按空格)")
+        # 触发识别按钮
+        self.trigger_btn = QPushButton("开始识别（空格键）")
         self.trigger_btn.setFixedHeight(60)
         self.trigger_btn.setStyleSheet("background-color: #F39C12; color: white; font-weight: bold; font-size: 18px; border-radius: 10px;")
 

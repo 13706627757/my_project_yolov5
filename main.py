@@ -3,7 +3,7 @@ import argparse
 import warnings
 import cv2
 import time
-from PyQt5.QtWidgets import QApplication
+from PyQt5.QtWidgets import QApplication, QDialog, QLabel, QPushButton, QVBoxLayout, QFrame
 from PyQt5.QtGui import QImage, QPixmap
 from PyQt5.QtCore import Qt
 # 导入我们刚才写的两个模块
@@ -90,11 +90,13 @@ class StreamDisplayThread:
         self._running = False
 
 class MainController(GarbageUI):
-    def __init__(self, serial_port='/dev/ttyTHS1', baudrate=115200):
+    def __init__(self, camera_index=0, model_path='my_weight/best-100.pt', device='cpu', serial_port=None, baudrate=115200):
         super().__init__()
+        self.warning_dialog = None
+        self.serial_listener = None
         # 1. 实例化大脑
-        self.detector = GarbageDetector('best.pt', 'cpu')
-        self.cap = cv2.VideoCapture(0) # 打开本地摄像头
+        self.detector = GarbageDetector(model_path, device)
+        self.cap = cv2.VideoCapture(camera_index)
 
         if not self.cap.isOpened():
             print("❌ 摄像头打开失败，请检查设备连接。")
@@ -102,23 +104,84 @@ class MainController(GarbageUI):
         # 2. 启动实时摄像头显示线程
         self.stream_thread = StreamDisplayThread(self.cap, self.update_stream_frame)
 
-        self.serial_listener = None
         if serial_port:
-            # 3. 启动串口监听：默认 Jetson Nano 可用 /dev/ttyTHS1，本地可改成 COMx
-            print(f"串口启动参数: port={serial_port}, baudrate={baudrate}")
             self.serial_listener = SerialTriggerListener(port=serial_port, baudrate=baudrate)
             self.serial_listener.trigger_received.connect(self.run_detection)
             self.serial_listener.message_received.connect(self.on_serial_message)
             self.serial_listener.status.connect(print)
             self.serial_listener.start()
-        
-        # 4. 绑定按钮点击事件
+
+        # 3. 绑定按钮点击事件
         self.trigger_btn.clicked.connect(self.run_detection)
         
     # 处理键盘事件 (按空格也能触发)
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Space:
             self.run_detection()
+        elif event.key() == Qt.Key_K:
+            self.show_recyclable_warning()
+        elif event.key() == Qt.Key_O:
+            self.show_full_warning('预警', '垃圾桶已满载，请及时清理或更换垃圾袋。', '#E74C3C')
+
+    def show_recyclable_warning(self):
+        self.show_full_warning('预警', '可回收垃圾桶已满载，请及时清理或更换垃圾袋。', '#3498DB')
+
+    def show_full_warning(self, title_text, message_text, accent_color):
+        if self.warning_dialog is not None and self.warning_dialog.isVisible():
+            self.warning_dialog.raise_()
+            self.warning_dialog.activateWindow()
+            return
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle('预警')
+        dialog.setModal(True)
+        dialog.setFixedSize(560, 320)
+        dialog.setStyleSheet(
+            'QDialog { background: #1E1E1E; }'
+            'QLabel { color: white; }'
+            'QPushButton { background: #E74C3C; color: white; border: none; border-radius: 10px; padding: 10px 18px; font-size: 16px; }'
+            'QPushButton:hover { background: #FF6B5B; }'
+        )
+
+        title = QLabel(title_text)
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet(f'font-size: 30px; font-weight: 700; color: {accent_color};')
+
+        message = QLabel(message_text)
+        message.setAlignment(Qt.AlignCenter)
+        message.setWordWrap(True)
+        message.setStyleSheet('font-size: 18px; color: #F2F2F2;')
+
+        separator = QFrame()
+        separator.setFrameShape(QFrame.HLine)
+        separator.setFrameShadow(QFrame.Sunken)
+        separator.setStyleSheet('color: #444; background: #444; max-height: 1px;')
+
+        close_btn = QPushButton('确认')
+        close_btn.setFixedHeight(48)
+        close_btn.clicked.connect(dialog.accept)
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(28, 28, 28, 28)
+        layout.setSpacing(18)
+        layout.addWidget(title)
+        layout.addWidget(separator)
+        layout.addWidget(message)
+        layout.addStretch(1)
+        layout.addWidget(close_btn)
+        dialog.setLayout(layout)
+
+        dialog.finished.connect(lambda _: setattr(self, 'warning_dialog', None))
+        self.warning_dialog = dialog
+        dialog.show()
+
+    def on_serial_message(self, message):
+        if not message or message in ('\r', '\n'):
+            return
+
+        print(f'串口 RX <- {message}')
+        if message.upper() == 'K':
+            self.show_recyclable_warning()
 
     def update_stream_frame(self, frame):
         """实时更新摄像头画面到界面"""
@@ -143,24 +206,12 @@ class MainController(GarbageUI):
                 self.counts[label] += 1
                 self.update_counter(label)
 
-            # 检测结束后按垃圾类别回发 0-3 给 STM32
             if result_code is not None:
-                print(f"推理结果: label={label}, 发送串口结果码={result_code}")
-                self.send_serial(result_code)
+                print(f"推理结果: label={label}, result_code={result_code}")
             else:
-                print(f"⚠️ 未识别到有效类别，label={label}，不发送结果码。")
+                print(f"⚠️ 未识别到有效类别，label={label}")
         else:
             print("❌ 抓图失败，未执行推理。")
-
-    def on_serial_message(self, message):
-        if message and message != '\r' and message != '\n':
-            print(f"串口 RX <- {message}")
-
-    def send_serial(self, text):
-        if hasattr(self, 'serial_listener'):
-            self.serial_listener.send_text(text)
-        else:
-            print('串口模块未初始化，无法发送')
 
     def show_image(self, img):
         rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
@@ -198,73 +249,19 @@ class MainController(GarbageUI):
 # 实时显示摄像头，按 t 键触发推理
 # 输出 0-3 到终端，q 键退出
 # =========================
-def run_local_test_mode():
-    print('================ 本地模式 local ================')
-    print('说明: 实时显示摄像头，按 t 键触发推理，按 q 键退出')
-    print('提示: 点击摄像头窗口后再按键')
-
-    detector = GarbageDetector('best.pt', 'cpu')
-    cap = cv2.VideoCapture(0)
-
-    if not cap.isOpened():
-        print('❌ 摄像头打开失败，请检查设备连接。')
-        return
-
-    try:
-        cv2.namedWindow('Local Test - Real-time Stream', cv2.WINDOW_AUTOSIZE)
-        print('按 t 键推理，按 q 键退出')
-        
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                print('❌ 抓图失败')
-                break
-
-            cv2.imshow('Local Test - Real-time Stream', frame)
-            key = cv2.waitKey(30) & 0xFF
-
-            if key == ord('q'):
-                print('用户退出')
-                break
-            elif key == ord('t'):
-                print('📡 收到触发指令，正在推理...')
-                img, label, confidence, result_code = infer_with_retry(detector, cap)
-                if img is None:
-                    print('❌ 推理失败')
-                    continue
-
-                print(f'推理结果: label={label}, confidence={confidence:.2%}')
-                if result_code is not None:
-                    print(f'发送结果码: {result_code}')
-                else:
-                    print('⚠️ 未识别到有效类别，不发送结果码。')
-    finally:
-        cap.release()
-        cv2.destroyAllWindows()
-
-
-# =========================
-# Jetson 模式（GUI + 串口）
-# 收到串口 t 触发推理
-# 推理后发送 0-3 给下位机
-# =========================
-def run_jetson_mode(serial_port, baudrate, qt_args):
-    print('================ Jetson 模式 jetson ================')
-    print(f'说明: 串口监听中，port={serial_port}, baudrate={baudrate}')
+def run_gui_mode(mode_name, qt_args):
+    print(f'================ {mode_name} 模式 GUI ================')
+    print('说明: Qt 界面实时显示摄像头画面，按按钮或空格键触发推理')
     app = QApplication([sys.argv[0]] + qt_args)
-    ctrl = MainController(serial_port=serial_port, baudrate=baudrate)
+    if mode_name == 'jetson':
+        ctrl = MainController(serial_port='/dev/ttyTHS1', baudrate=115200)
+    else:
+        ctrl = MainController() 
     ctrl.show()
-    sys.exit(app.exec_())
+    sys.exit(app.exec_())  
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Garbage detection UI with serial trigger')
-    parser.add_argument('--mode', choices=['jetson', 'local'], default='jetson', help='local: 笔记本终端输入 t 测试；jetson: 串口 t 触发 + GUI 显示')
-    parser.add_argument('--port', default='/dev/ttyTHS1', help='Serial port, e.g. /dev/ttyTHS1 or COM3')
-    parser.add_argument('--baudrate', type=int, default=115200, help='Serial baudrate')
+    parser = argparse.ArgumentParser(description='Garbage detection UI')
+    parser.add_argument('--mode', choices=['jetson', 'local'], default='local', help='两种模式使用同一套 Qt 界面与识别流程，仅保留命名区分')
     args, qt_args = parser.parse_known_args()
-
-    if args.mode == 'local':
-        run_local_test_mode()
-        sys.exit(0)
-
-    run_jetson_mode(serial_port=args.port, baudrate=args.baudrate, qt_args=qt_args)
+    run_gui_mode(args.mode, qt_args)
